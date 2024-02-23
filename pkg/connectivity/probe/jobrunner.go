@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/mattfenwick/collections/pkg/json"
@@ -135,15 +136,27 @@ func (k *KubeJobRunner) worker(jobs <-chan *Job, results chan<- *JobResult) {
 
 func probeConnectivity(k8s kube.IKubernetes, job *Job) (Connectivity, string) {
 	commandDebugString := strings.Join(job.KubeExecCommand(), " ")
-	stdout, stderr, commandErr, err := k8s.ExecuteRemoteCommand(job.FromNamespace, job.FromPod, job.FromContainer, job.ClientCommand())
-	logrus.Debugf("stdout, stderr from %s: \n%s\n%s", commandDebugString, stdout, stderr)
-	if err != nil {
-		logrus.Errorf("unable to set up command %s: %+v", commandDebugString, err)
-		return ConnectivityCheckFailed, commandDebugString
-	}
-	if commandErr != nil {
-		logrus.Debugf("unable to run command %s: %+v", commandDebugString, commandErr)
-		return ConnectivityBlocked, commandDebugString
+	retry := 0
+	for retry < 3 {
+		stdout, stderr, commandErr, err := k8s.ExecuteRemoteCommand(job.FromNamespace, job.FromPod, job.FromContainer, job.ClientCommand())
+		logrus.Debugf("stdout, stderr from %s: \n%s\n%s", commandDebugString, stdout, stderr)
+		if err != nil {
+			logrus.Errorf("unable to set up command %s: %+v", commandDebugString, err)
+			return ConnectivityCheckFailed, commandDebugString
+		}
+
+		if strings.Contains(stdout, "OTHER") || strings.Contains(stderr, "OTHER") {
+			fmt.Printf("Other error stdout, stderr %s: %s:%s", commandDebugString, stdout, stderr)
+			retry += 1
+			if retry < 3 {
+				continue
+			}
+		}
+
+		if commandErr != nil {
+			logrus.Debugf("unable to run command %s: %+v", commandDebugString, commandErr)
+			return ConnectivityBlocked, commandDebugString
+		}
 	}
 	return ConnectivityAllowed, commandDebugString
 }
